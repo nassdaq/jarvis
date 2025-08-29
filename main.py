@@ -109,7 +109,8 @@ class JarvisMainUI(QWidget):
                 self.memory.add("assistant", f"Missing info: {missing}", meta={"type": "missing_info"})
                 self.speak_response("I need more information to proceed.")
             else:
-                result = self.workflow_engine.execute_workflow(wf)
+                # Pass the original user utterance for fallback app launching
+                result = self.workflow_engine.execute_workflow(wf, user_utterance=transcript)
                 logger.info(f"Workflow execution result: {result}")
                 self.text_area.append(f"<b>Workflow Results:</b>\n{result}")
                 self.memory.add("assistant", str(result), meta={"type": "workflow_result"})

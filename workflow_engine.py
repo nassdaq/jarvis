@@ -1,8 +1,10 @@
 from workflow_models import Workflow, Action, ValidationError
 from typing import Any, Dict, List
 import actions
+import importlib
 from logging_setup import logger
-
+import subprocess
+import re
 class WorkflowEngine:
     def __init__(self):
         self.last_workflow = None
@@ -22,7 +24,7 @@ class WorkflowEngine:
             logger.error(f"validate_workflow error: {e}")
             return None
 
-    def execute_workflow(self, workflow: Workflow) -> Dict:
+    def execute_workflow(self, workflow: Workflow, user_utterance: str = "") -> Dict:
         logger.info(f"execute_workflow called with workflow: {workflow}")
         results = []
         for step in workflow.steps:
@@ -43,8 +45,7 @@ class WorkflowEngine:
                         user_confirmation_needed = True
             elif action == "system_command":
                 command = getattr(step, "command", "")
-                import subprocess
-                import re
+
                 match = re.search(r"(open|launch|start)\s+['\"]?([a-zA-Z0-9 ._-]+)['\"]?", command.lower())
                 if match:
                     app_name = match.group(2)
@@ -92,7 +93,37 @@ class WorkflowEngine:
                     user_confirmation_needed = True
             elif not auto_tool_match and not action == "system_command":
                 logger.warning(f"execute_workflow unknown action: {action}")
-                result = self.auto_tool_handler(action, step)
+                # Fallback: try to infer app from user utterance
+                fallback_result = None
+                if user_utterance:
+                    for app in ["terminal", "photo booth", "camera", "reminders", "safari", "settings"]:
+                        if app in user_utterance.lower():
+                            fallback_result = self.auto_tool_handler(app, step)
+                            logger.info(f"Fallback auto-tool: tried to open {app} from user utterance.")
+                            break
+                if fallback_result:
+                    result = fallback_result
+                else:
+                    # Try to auto-generate the missing tool
+                    from auto_tool_generation import auto_generate_tool
+                    # Use the step's dict to get parameter names
+                    params = [k for k, v in step.dict().items() if v is not None and k != "action"]
+                    description = f"Auto-generated tool for action '{action}' with parameters {params}."
+                    gen_result = auto_generate_tool(action, params, description)
+                    logger.info(f"Auto-tool generation result: {gen_result}")
+                    # Try to call the new tool
+                    importlib.reload(actions)
+                    if hasattr(actions, action):
+                        func = getattr(actions, action)
+                        try:
+                            valid_params = {k: v for k, v in step.dict().items() if v is not None and k != "action"}
+                            result = func(**valid_params)
+                            logger.info(f"Auto-generated tool {action} executed with result: {result!r}")
+                        except Exception as e:
+                            logger.error(f"Auto-generated tool {action} failed: {e}")
+                            result = f"Auto-generated tool {action} failed: {e}"
+                    else:
+                        result = f"Auto-generated tool {action} could not be loaded."
                 user_confirmation_needed = True
             # After each step, check if user confirmation is needed
             if user_confirmation_needed:
